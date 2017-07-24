@@ -183,7 +183,7 @@ def delegate_docker(args, exclude, require):
 
     cmd_options = []
 
-    if isinstance(args, ShellConfig):
+    if isinstance(args, ShellConfig) or (isinstance(args, IntegrationConfig) and args.debug_strategy):
         cmd_options.append('-it')
 
     with tempfile.NamedTemporaryFile(prefix='ansible-source-', suffix='.tgz') as local_source_fd:
@@ -225,7 +225,7 @@ def delegate_docker(args, exclude, require):
                     '--env', 'HTTPTESTER=1',
                 ]
 
-            if isinstance(args, TestConfig):
+            if isinstance(args, IntegrationConfig):
                 cloud_platforms = get_cloud_providers(args)
 
                 for cloud_platform in cloud_platforms:
@@ -305,7 +305,7 @@ def delegate_remote(args, exclude, require):
 
         ssh_options = []
 
-        if isinstance(args, TestConfig):
+        if isinstance(args, IntegrationConfig):
             cloud_platforms = get_cloud_providers(args)
 
             for cloud_platform in cloud_platforms:

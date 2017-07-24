@@ -90,6 +90,12 @@ options:
               this flag is set to C(false).
         required: False
         version_added: "2.4"
+   remove_children:
+        description:
+            - If set to C(true) and state is set to C(absent), then entire snapshot subtree is set
+              for removal.
+        required: False
+        version_added: "2.4"
 extends_documentation_fragment: vmware.documentation
 '''
 
@@ -145,6 +151,17 @@ EXAMPLES = '''
       quiesce: True
       memory_dump: True
     delegate_to: localhost
+
+  - name: Remove a snapshot and snapshot subtree
+    vmware_guest_snapshot:
+      hostname: 192.168.1.209
+      username: administrator@vsphere.local
+      password: vmware
+      name: dummy_vm
+      state: remove
+      remove_children: True
+      snapshot_name: snap1
+    delegate_to: localhost
 '''
 
 RETURN = """
@@ -155,13 +172,11 @@ instance:
     sample: None
 """
 
-import os
-import time
 
-# import module snippets
-from ansible.module_utils.basic import AnsibleModule
-from ansible.module_utils.vmware import connect_to_api
+import time
 from ansible.module_utils._text import to_native
+from ansible.module_utils.basic import AnsibleModule
+from ansible.module_utils.vmware import connect_to_api, vmware_argument_spec
 
 try:
     import json
@@ -269,7 +284,9 @@ class PyVmomiHelper(object):
         if len(snap_obj) == 1:
             snap_obj = snap_obj[0].snapshot
             if self.module.params["state"] == "absent":
-                task = snap_obj.RemoveSnapshot_Task(True)
+                # Remove subtree depending upon the user input
+                remove_children = self.module.params.get('remove_children', False)
+                task = snap_obj.RemoveSnapshot_Task(remove_children)
             elif self.module.params["state"] == "revert":
                 task = snap_obj.RevertToSnapshot_Task()
         else:
@@ -302,36 +319,21 @@ class PyVmomiHelper(object):
 
 
 def main():
-    module = AnsibleModule(
-        argument_spec=dict(
-            hostname=dict(
-                type='str',
-                default=os.environ.get('VMWARE_HOST')
-            ),
-            username=dict(
-                type='str',
-                default=os.environ.get('VMWARE_USER')
-            ),
-            password=dict(
-                type='str', no_log=True,
-                default=os.environ.get('VMWARE_PASSWORD')
-            ),
-            state=dict(
-                required=False,
-                choices=['present', 'absent', 'revert', 'remove_all'],
-                default='present'),
-            validate_certs=dict(required=False, type='bool', default=True),
-            name=dict(required=True, type='str'),
-            name_match=dict(required=False, type='str', default='first'),
-            uuid=dict(required=False, type='str'),
-            folder=dict(required=False, type='str', default='/vm'),
-            datacenter=dict(required=True, type='str'),
-            snapshot_name=dict(required=False, type='str'),
-            description=dict(required=False, type='str', default=''),
-            quiesce=dict(type='bool', default=False),
-            memory_dump=dict(type='bool', default=False),
-        ),
+    argument_spec = vmware_argument_spec()
+    argument_spec.update(
+        state=dict(default='present', choices=['present', 'absent', 'revert', 'remove_all']),
+        name=dict(required=True, type='str'),
+        name_match=dict(type='str', default='first'),
+        uuid=dict(type='str'),
+        folder=dict(type='str', default='/vm'),
+        datacenter=dict(required=True, type='str'),
+        snapshot_name=dict(type='str'),
+        description=dict(type='str', default=''),
+        quiesce=dict(type='bool', default=False),
+        memory_dump=dict(type='bool', default=False),
+        remove_children=dict(type='bool', default=False),
     )
+    module = AnsibleModule(argument_spec=argument_spec)
 
     # Prepend /vm if it was missing from the folder path, also strip trailing slashes
     if not module.params['folder'].startswith('/vm') and module.params['folder'].startswith('/'):

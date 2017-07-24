@@ -182,7 +182,8 @@ def find_vm_by_id(content, vm_id, vm_id_type="vm_name", datacenter=None, cluster
         if isinstance(vm, vim.VirtualMachine):
             vm = None
     elif vm_id_type == 'uuid':
-        vm = si.FindByUuid(datacenter=datacenter, instanceUuid=vm_id, vmSearch=True)
+        # Search By BIOS UUID rather than instance UUID
+        vm = si.FindByUuid(datacenter=datacenter, instanceUuid=False, uuid=vm_id, vmSearch=True)
     elif vm_id_type == 'ip':
         vm = si.FindByIp(datacenter=datacenter, ip=vm_id, vmSearch=True)
     elif vm_id_type == 'vm_name':
@@ -213,6 +214,35 @@ def find_host_portgroup_by_name(host, portgroup_name):
     return None
 
 
+def compile_folder_path_for_object(vobj):
+    """ make a /vm/foo/bar/baz like folder path for an object """
+
+    paths = []
+    if isinstance(vobj, vim.Folder):
+        paths.append(vobj.name)
+
+    thisobj = vobj
+    while hasattr(thisobj, 'parent'):
+        thisobj = thisobj.parent
+        if isinstance(thisobj, vim.Folder):
+            paths.append(thisobj.name)
+    paths.reverse()
+    if paths[0] == 'Datacenters':
+        paths.remove('Datacenters')
+    return '/' + '/'.join(paths)
+
+
+def _get_vm_prop(vm, attributes):
+    """Safely get a property or return None"""
+    result = vm
+    for attribute in attributes:
+        try:
+            result = getattr(result, attribute)
+        except (AttributeError, IndexError):
+            return None
+    return result
+
+
 def gather_vm_facts(content, vm):
     """ Gather facts from vim.VirtualMachine object. """
     facts = {
@@ -225,8 +255,8 @@ def gather_vm_facts(content, vm):
         'hw_processor_count': vm.config.hardware.numCPU,
         'hw_memtotal_mb': vm.config.hardware.memoryMB,
         'hw_interfaces': [],
-        'guest_tools_status': vm.guest.toolsRunningStatus,
-        'guest_tools_version': vm.guest.toolsVersion,
+        'guest_tools_status': _get_vm_prop(vm, ('guest', 'toolsRunningStatus')),
+        'guest_tools_version': _get_vm_prop(vm, ('guest', 'toolsVersion')),
         'ipv4': None,
         'ipv6': None,
         'annotation': vm.config.annotation,
@@ -249,8 +279,10 @@ def gather_vm_facts(content, vm):
         facts['customvalues'][kn] = value_obj.value
 
     net_dict = {}
-    for device in vm.guest.net:
-        net_dict[device.macAddress] = list(device.ipAddress)
+    vmnet = _get_vm_prop(vm, ('guest', 'net'))
+    if vmnet:
+        for device in vmnet:
+            net_dict[device.macAddress] = list(device.ipAddress)
 
     for k, v in iteritems(net_dict):
         for ipaddress in v:
@@ -317,6 +349,9 @@ def get_current_snap_obj(snapshots, snapob):
 
 def list_snapshots(vm):
     result = {}
+    snapshot = _get_vm_prop(vm, ('vm', 'snapshot'))
+    if not snapshot:
+        return result
     if vm.snapshot is None:
         return result
 
@@ -360,7 +395,7 @@ def connect_to_api(module, disconnect_atexit=True):
             service_instance = connect.SmartConnect(host=hostname, user=username, pwd=password, sslContext=context)
         else:
             module.fail_json(msg="Unable to connect to vCenter or ESXi API on TCP/443.", apierror=str(connection_error))
-    except Exception as e:
+    except:
         context = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
         context.verify_mode = ssl.CERT_NONE
         service_instance = connect.SmartConnect(host=hostname, user=username, pwd=password, sslContext=context)
@@ -533,3 +568,58 @@ def run_command_in_guest(content, vm, username, password, program_path, program_
         result['failed'] = True
 
     return result
+
+
+def serialize_spec(clonespec):
+    """Serialize a clonespec or a relocation spec"""
+    data = {}
+    attrs = dir(clonespec)
+    attrs = [x for x in attrs if not x.startswith('_')]
+    for x in attrs:
+        xo = getattr(clonespec, x)
+        if callable(xo):
+            continue
+        xt = type(xo)
+        if xo is None:
+            data[x] = None
+        elif issubclass(xt, list):
+            data[x] = []
+            for xe in xo:
+                data[x].append(serialize_spec(xe))
+        elif issubclass(xt, str):
+            data[x] = xo
+        elif issubclass(xt, unicode):
+            data[x] = xo
+        elif issubclass(xt, int):
+            data[x] = xo
+        elif issubclass(xt, float):
+            data[x] = xo
+        elif issubclass(xt, long):
+            data[x] = xo
+        elif issubclass(xt, bool):
+            data[x] = xo
+        elif issubclass(xt, dict):
+            data[x] = {}
+            for k, v in xo.items():
+                data[x][k] = serialize_spec(v)
+        elif isinstance(xo, vim.vm.ConfigSpec):
+            data[x] = serialize_spec(xo)
+        elif isinstance(xo, vim.vm.RelocateSpec):
+            data[x] = serialize_spec(xo)
+        elif isinstance(xo, vim.vm.device.VirtualDisk):
+            data[x] = serialize_spec(xo)
+        elif isinstance(xo, vim.Description):
+            data[x] = {
+                'dynamicProperty': serialize_spec(xo.dynamicProperty),
+                'dynamicType': serialize_spec(xo.dynamicType),
+                'label': serialize_spec(xo.label),
+                'summary': serialize_spec(xo.summary),
+            }
+        elif hasattr(xo, 'name'):
+            data[x] = str(xo) + ':' + xo.name
+        elif isinstance(xo, vim.vm.ProfileSpec):
+            pass
+        else:
+            data[x] = str(xt)
+
+    return data

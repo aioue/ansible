@@ -157,6 +157,11 @@ stdout_lines:
   returned: always apart from low level errors (such as action plugin)
   type: list
   sample: [['...', '...'], ['...'], ['...']]
+output:
+  description: The set of transformed xml to json format from the commands responses
+  returned: If the I(display) is in C(xml) format.
+  type: list
+  sample: ['...', '...']
 failed_conditions:
   description: The list of conditionals that have failed
   returned: failed
@@ -167,8 +172,8 @@ import time
 import re
 import shlex
 
-from ansible.module_utils.junos import junos_argument_spec, check_args
 from ansible.module_utils.basic import AnsibleModule
+from ansible.module_utils.junos import junos_argument_spec, check_args
 from ansible.module_utils.netcli import Conditional, FailedConditionalError
 from ansible.module_utils.netconf import send_request
 from ansible.module_utils.six import string_types, iteritems
@@ -348,7 +353,7 @@ def main():
         responses = rpc(module, items)
 
         transformed = list()
-
+        output = list()
         for item, resp in zip(items, responses):
             if item['xattrs']['format'] == 'xml':
                 if not HAS_JXMLEASE:
@@ -356,7 +361,9 @@ def main():
                                          'It can be installed using `pip install jxmlease`')
 
                 try:
-                    transformed.append(jxmlease.parse(resp))
+                    json_resp = jxmlease.parse(resp)
+                    transformed.append(json_resp)
+                    output.append(json_resp)
                 except:
                     raise ValueError(resp)
             else:
@@ -389,6 +396,9 @@ def main():
         'stdout': responses,
         'stdout_lines': to_lines(responses)
     }
+
+    if output:
+        result['output'] = output
 
     module.exit_json(**result)
 

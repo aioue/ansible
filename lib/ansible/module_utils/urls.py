@@ -571,6 +571,8 @@ def build_ssl_validation_error(hostname, port, paths, exc=None):
     if not HAS_SSLCONTEXT:
         msg.append('If the website serving the url uses SNI you need'
                    ' python >= 2.7.9 on your managed machine')
+        msg.append(' (the python executable used (%s) is version: %s)' %
+                   (sys.executable, ''.join(sys.version.splitlines())))
         if not HAS_URLLIB3_PYOPENSSLCONTEXT or not HAS_URLLIB3_SSL_WRAP_SOCKET:
             msg.append('or you can install the `urllib3`, `pyOpenSSL`,'
                        ' `ndg-httpsclient`, and `pyasn1` python modules')
@@ -718,11 +720,10 @@ class SSLValidationHandler(urllib_request.BaseHandler):
             return req
 
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             if https_proxy:
                 proxy_parts = generic_urlparse(urlparse(https_proxy))
                 port = proxy_parts.get('port') or 443
-                s.connect((proxy_parts.get('hostname'), port))
+                s = socket.create_connection((proxy_parts.get('hostname'), port))
                 if proxy_parts.get('scheme') == 'http':
                     s.sendall(self.CONNECT_COMMAND % (self.hostname, self.port))
                     if proxy_parts.get('username'):
@@ -746,7 +747,7 @@ class SSLValidationHandler(urllib_request.BaseHandler):
                 else:
                     raise ProxyError('Unsupported proxy scheme: %s. Currently ansible only supports HTTP proxies.' % proxy_parts.get('scheme'))
             else:
-                s.connect((self.hostname, self.port))
+                s = socket.create_connection((self.hostname, self.port))
                 if context:
                     ssl_s = context.wrap_socket(s, server_hostname=self.hostname)
                 elif HAS_URLLIB3_SSL_WRAP_SOCKET:
@@ -1019,7 +1020,7 @@ def fetch_url(module, url, data=None, headers=None, method=None,
 
     username = module.params.get('url_username', '')
     password = module.params.get('url_password', '')
-    http_agent = module.params.get('http_agent', None)
+    http_agent = module.params.get('http_agent', 'ansible-httpget')
     force_basic_auth = module.params.get('force_basic_auth', '')
 
     follow_redirects = module.params.get('follow_redirects', 'urllib2')
